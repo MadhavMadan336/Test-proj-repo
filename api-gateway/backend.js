@@ -104,6 +104,40 @@ app.post('/api/user/update-profile', async (req, res) => {
     }
 });
 
+// --- COST MONITORING ROUTE ---
+app.get('/api/data/costs/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        
+        console.log(`Gateway: Fetching costs for user ${userId}`);
+        
+        const response = await axios.get(`${MONITORING_SERVICE_URL}/api/costs/${userId}`);
+        res.status(response.status).send(response.data);
+    } catch (error) {
+        console.error('Gateway cost error:', error.message);
+        const status = error.response ? error.response.status : 500;
+        const message = error.response 
+            ? error.response.data.message 
+            : 'Gateway Error: Failed to fetch cost data';
+        res.status(status).send({ message });
+    }
+});
+
+// Add this debug route
+app.get('/api/data/costs/debug/:userId', async (req, res) => {
+    try {
+        const { userId } = req.params;
+        console.log(`Gateway: Debug costs for user ${userId}`);
+        const response = await axios.get(`${MONITORING_SERVICE_URL}/api/costs/debug/${userId}`);
+        res.status(response.status).send(response.data);
+    } catch (error) {
+        console.error('Gateway debug error:', error.message);
+        const status = error.response ? error.response.status : 500;
+        const message = error.response ? error.response.data : { message: 'Debug failed' };
+        res.status(status).send(message);
+    }
+});
+
 // Update region
 app.post('/api/auth/update-region', async (req, res) => {
     try {

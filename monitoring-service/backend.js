@@ -7,6 +7,7 @@ import { EC2Client, DescribeInstancesCommand, DescribeVolumesCommand } from "@aw
 import { S3Client, ListBucketsCommand, GetBucketLocationCommand } from "@aws-sdk/client-s3";
 import { RDSClient, DescribeDBInstancesCommand } from "@aws-sdk/client-rds";
 import { LambdaClient, ListFunctionsCommand } from "@aws-sdk/client-lambda";
+import { CostExplorerClient, GetCostAndUsageCommand, GetCostForecastCommand } from "@aws-sdk/client-cost-explorer";
 
 dotenv.config();
 
@@ -82,6 +83,206 @@ async function getCloudWatchMetric(client, namespace, metricName, dimensions, st
     } catch (error) {
         console.error(`Error fetching metric ${metricName}:`, error.message);
         return 'N/A';
+    }
+}
+
+// --- Cost Explorer Function ---
+async function fetchAWSCosts(credentials) {
+    try {
+        console.log('💰 Starting cost fetch...');
+        
+        // Cost Explorer is only available in us-east-1
+        const client = new CostExplorerClient({ 
+            region: 'us-east-1', 
+            credentials 
+        });
+
+        const now = new Date();
+        const currentYear = now.getUTCFullYear();
+        const currentMonth = now.getUTCMonth(); // 0-indexed (0 = January)
+        
+        // First day of current month
+        const firstDayOfMonth = new Date(Date.UTC(currentYear, currentMonth, 1));
+        
+        // Today (current date)
+        const today = new Date(Date.UTC(currentYear, currentMonth, now.getUTCDate()));
+        
+        // Last day of current month
+        const lastDayOfMonth = new Date(Date.UTC(currentYear, currentMonth + 1, 0));
+        
+        // Format dates as YYYY-MM-DD
+        const startDate = firstDayOfMonth.toISOString().split('T')[0];
+        const todayDate = today.toISOString().split('T')[0];
+        const endDate = lastDayOfMonth.toISOString().split('T')[0];
+
+        console.log('📅 Date Range:', { startDate, todayDate, endDate });
+
+        // Get current month costs by service (Month to Date)
+        const costByServiceCommand = new GetCostAndUsageCommand({
+            TimePeriod: {
+                Start: startDate,
+                End: todayDate
+            },
+            Granularity: 'MONTHLY',
+            Metrics: ['UnblendedCost'],
+            GroupBy: [
+                {
+                    Type: 'DIMENSION',
+                    Key: 'SERVICE'
+                }
+            ]
+        });
+
+        console.log('🔍 Fetching cost by service...');
+        const costByServiceData = await client.send(costByServiceCommand);
+
+        // Get daily costs for this month
+        const dailyCostCommand = new GetCostAndUsageCommand({
+            TimePeriod: {
+                Start: startDate,
+                End: todayDate
+            },
+            Granularity: 'DAILY',
+            Metrics: ['UnblendedCost']
+        });
+
+        console.log('🔍 Fetching daily costs...');
+        const dailyCostData = await client.send(dailyCostCommand);
+
+        // Get forecast for rest of month (only if we're not at end of month)
+        let forecastData = null;
+        const daysRemaining = Math.ceil((lastDayOfMonth - today) / (1000 * 60 * 60 * 24));
+        
+        if (daysRemaining > 1) {
+            const forecastCommand = new GetCostForecastCommand({
+                TimePeriod: {
+                    Start: todayDate,
+                    End: endDate
+                },
+                Metric: 'UNBLENDED_COST',
+                Granularity: 'MONTHLY'
+            });
+
+            try {
+                console.log('🔍 Fetching cost forecast...');
+                forecastData = await client.send(forecastCommand);
+            } catch (forecastError) {
+                console.warn('⚠️ Unable to get cost forecast:', forecastError.message);
+            }
+        } else {
+            console.log('⚠️ Too close to end of month, skipping forecast');
+        }
+
+        // Process cost by service
+        const serviceBreakdown = [];
+        let totalCost = 0;
+
+        console.log('📊 Processing service breakdown...');
+        if (costByServiceData.ResultsByTime && costByServiceData.ResultsByTime.length > 0) {
+            const groups = costByServiceData.ResultsByTime[0].Groups || [];
+            console.log(`Found ${groups.length} service groups`);
+            
+            for (const group of groups) {
+                const serviceName = group.Keys[0];
+                const amount = parseFloat(group.Metrics.UnblendedCost.Amount);
+                
+                console.log(`Service: ${serviceName}, Cost: $${amount.toFixed(4)}`);
+                
+                if (amount > 0.001) { // Include all costs > $0.001
+                    serviceBreakdown.push({
+                        service: serviceName,
+                        cost: amount.toFixed(4), // Keep more precision
+                        percentage: 0 // Will calculate after
+                    });
+                    totalCost += amount;
+                }
+            }
+
+            // Calculate percentages
+            serviceBreakdown.forEach(item => {
+                item.percentage = totalCost > 0 
+                    ? ((parseFloat(item.cost) / totalCost) * 100).toFixed(1)
+                    : '0';
+            });
+
+            // Sort by cost descending
+            serviceBreakdown.sort((a, b) => parseFloat(b.cost) - parseFloat(a.cost));
+        } else {
+            console.warn('⚠️ No cost data returned from AWS');
+        }
+
+        console.log(`💰 Total Cost (Month to Date): $${totalCost.toFixed(4)}`);
+
+        // Process daily costs
+        const dailyCosts = [];
+        if (dailyCostData.ResultsByTime) {
+            console.log(`📅 Processing ${dailyCostData.ResultsByTime.length} daily cost entries`);
+            for (const result of dailyCostData.ResultsByTime) {
+                const date = result.TimePeriod.Start;
+                const amount = parseFloat(result.Total.UnblendedCost.Amount);
+                dailyCosts.push({
+                    date: date,
+                    cost: amount.toFixed(4)
+                });
+                console.log(`Date: ${date}, Cost: $${amount.toFixed(4)}`);
+            }
+        }
+
+        // Process forecast
+        let estimatedMonthlyTotal = totalCost;
+        let forecastAmount = 0;
+        
+        if (forecastData && forecastData.Total) {
+            forecastAmount = parseFloat(forecastData.Total.Amount);
+            estimatedMonthlyTotal = totalCost + forecastAmount;
+            console.log(`🔮 Forecast for remaining days: $${forecastAmount.toFixed(4)}`);
+        }
+
+        console.log(`📊 Estimated Monthly Total: $${estimatedMonthlyTotal.toFixed(4)}`);
+
+        return {
+            currentMonthToDate: totalCost.toFixed(2),
+            estimatedMonthlyTotal: estimatedMonthlyTotal.toFixed(2),
+            currency: 'USD',
+            serviceBreakdown: serviceBreakdown.map(s => ({
+                ...s,
+                cost: parseFloat(s.cost).toFixed(2) // Format to 2 decimals for display
+            })),
+            dailyCosts: dailyCosts.map(d => ({
+                ...d,
+                cost: parseFloat(d.cost).toFixed(2) // Format to 2 decimals for display
+            })),
+            period: {
+                start: startDate,
+                end: todayDate,
+                lastDayOfMonth: endDate
+            },
+            debug: {
+                rawTotal: totalCost,
+                forecastAmount: forecastAmount,
+                daysInMonth: lastDayOfMonth.getUTCDate(),
+                currentDay: today.getUTCDate(),
+                daysRemaining: daysRemaining
+            }
+        };
+
+    } catch (error) {
+        console.error('❌ Error fetching AWS costs:', error.message);
+        console.error('Full error:', error);
+        
+        // Return empty data structure on error
+        return {
+            currentMonthToDate: '0.00',
+            estimatedMonthlyTotal: '0.00',
+            currency: 'USD',
+            serviceBreakdown: [],
+            dailyCosts: [],
+            period: {
+                start: new Date().toISOString().split('T')[0],
+                end: new Date().toISOString().split('T')[0]
+            },
+            error: error.message
+        };
     }
 }
 
@@ -229,17 +430,14 @@ async function fetchS3Buckets(s3Client, cloudWatchClient, region) {
         const buckets = [];
         for (const bucket of bucketData.Buckets) {
             try {
-                // Get bucket location
                 const locationCommand = new GetBucketLocationCommand({ Bucket: bucket.Name });
                 const locationData = await s3Client.send(locationCommand);
                 const bucketRegion = locationData.LocationConstraint || 'us-east-1';
 
-                // Only include buckets in the current region
                 if (bucketRegion !== region && !(region === 'us-east-1' && !locationData.LocationConstraint)) {
                     continue;
                 }
 
-                // Get bucket size from CloudWatch
                 let bucketSize = await getCloudWatchMetric(
                     cloudWatchClient,
                     'AWS/S3',
@@ -354,10 +552,6 @@ async function fetchLambdaFunctions(lambdaClient, cloudWatchClient) {
         for (const func of lambdaData.Functions) {
             const functionName = func.FunctionName;
 
-            // Get metrics for last 24 hours
-            const now = new Date();
-            const startTime = new Date(now.getTime() - 24 * 60 * 60 * 1000);
-
             let invocations = 'N/A';
             let errors = 'N/A';
             let duration = 'N/A';
@@ -412,7 +606,9 @@ async function fetchLambdaFunctions(lambdaClient, cloudWatchClient) {
     }
 }
 
-// --- Main API Route ---
+// --- API ROUTES ---
+
+// Main Metrics Route
 app.get('/api/metrics/:userId', async (req, res) => {
     const { userId } = req.params;
     const { region, services } = req.query;
@@ -425,14 +621,12 @@ app.get('/api/metrics/:userId', async (req, res) => {
 
         const credentials = { accessKeyId, secretAccessKey };
 
-        // Initialize clients
         const ec2Client = new EC2Client({ region: finalRegion, credentials });
         const cloudWatchClient = new CloudWatchClient({ region: finalRegion, credentials });
         const s3Client = new S3Client({ region: finalRegion, credentials });
         const rdsClient = new RDSClient({ region: finalRegion, credentials });
         const lambdaClient = new LambdaClient({ region: finalRegion, credentials });
 
-        // Determine which services to fetch
         const servicesToFetch = services ? services.split(',') : ['ec2', 's3', 'rds', 'lambda', 'ebs'];
 
         const results = {
@@ -440,7 +634,6 @@ app.get('/api/metrics/:userId', async (req, res) => {
             resources: {}
         };
 
-        // Fetch services in parallel
         const promises = [];
 
         if (servicesToFetch.includes('ec2')) {
@@ -509,6 +702,89 @@ app.get('/api/metrics/:userId', async (req, res) => {
         res.status(500).send({
             message: error.message || 'Failed to fetch metrics from AWS.',
             region: region || 'unknown'
+        });
+    }
+});
+
+// Cost Monitoring Route
+app.get('/api/costs/:userId', async (req, res) => {
+    const { userId } = req.params;
+
+    try {
+        console.log(`💰 Fetching cost data for user: ${userId}`);
+        
+        const { accessKeyId, secretAccessKey } = await getCredentials(userId);
+        const credentials = { accessKeyId, secretAccessKey };
+
+        const costData = await fetchAWSCosts(credentials);
+
+        console.log(`✅ Successfully fetched cost data. Total: $${costData.currentMonthToDate}`);
+
+        res.status(200).send(costData);
+
+    } catch (error) {
+        console.error('❌ Error in /api/costs:', error);
+        res.status(500).send({
+            message: error.message || 'Failed to fetch cost data from AWS.',
+            currentMonthToDate: '0.00',
+            estimatedMonthlyTotal: '0.00',
+            currency: 'USD',
+            serviceBreakdown: [],
+            dailyCosts: []
+        });
+    }
+});
+
+// Debug Cost Route
+app.get('/api/costs/debug/:userId', async (req, res) => {
+    const { userId } = req.params;
+
+    try {
+        console.log(`🔍 DEBUG: Fetching cost data for user: ${userId}`);
+        
+        const { accessKeyId, secretAccessKey } = await getCredentials(userId);
+        const credentials = { accessKeyId, secretAccessKey };
+
+        const client = new CostExplorerClient({ 
+            region: 'us-east-1', 
+            credentials 
+        });
+
+        const now = new Date();
+        const currentYear = now.getUTCFullYear();
+        const currentMonth = now.getUTCMonth();
+        
+        const firstDayOfMonth = new Date(Date.UTC(currentYear, currentMonth, 1));
+        const today = new Date(Date.UTC(currentYear, currentMonth, now.getUTCDate()));
+        
+        const startDate = firstDayOfMonth.toISOString().split('T')[0];
+        const todayDate = today.toISOString().split('T')[0];
+
+        const command = new GetCostAndUsageCommand({
+            TimePeriod: {
+                Start: startDate,
+                End: todayDate
+            },
+            Granularity: 'MONTHLY',
+            Metrics: ['UnblendedCost', 'BlendedCost', 'AmortizedCost']
+        });
+
+        const rawData = await client.send(command);
+
+        res.status(200).send({
+            message: 'Raw AWS Cost Explorer Response',
+            dateRange: { startDate, todayDate },
+            rawResponse: rawData,
+            totalUnblended: rawData.ResultsByTime?.[0]?.Total?.UnblendedCost?.Amount,
+            totalBlended: rawData.ResultsByTime?.[0]?.Total?.BlendedCost?.Amount,
+            totalAmortized: rawData.ResultsByTime?.[0]?.Total?.AmortizedCost?.Amount
+        });
+
+    } catch (error) {
+        console.error('❌ Debug endpoint error:', error);
+        res.status(500).send({
+            error: error.message,
+            stack: error.stack
         });
     }
 });

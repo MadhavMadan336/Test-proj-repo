@@ -1,353 +1,323 @@
 import express from 'express';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
-import crypto from 'crypto';
 import cors from 'cors';
 import bcrypt from 'bcrypt';
+import crypto from 'crypto';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const MONGO_URI = process.env.MONGO_URI;
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY; // Must be 32 bytes for aes-256-cbc
-const IV_LENGTH = 16;
+
+// Add detailed logging
+console.log('🚀 Starting User Service...');
+console.log('📍 Environment:', process.env.NODE_ENV);
+console.log('🔌 MongoDB URI:', process.env.MONGO_URI ? 'Set ✓' : 'Missing ✗');
+console.log('🔐 Encryption Key:', process.env.ENCRYPTION_KEY ? 'Set ✓' : 'Missing ✗');
+console.log('🔢 Port:', PORT);
 
 app.use(cors());
 app.use(express.json());
 
-// --- Database Connection ---
-mongoose
-  .connect(MONGO_URI)
-  .then(() => console.log('✅ User Service connected to MongoDB Atlas'))
-  .catch(err => console.error('❌ MongoDB connection error:', err));
+// MongoDB Connection
+const MONGO_URI = process.env.MONGO_URI;
 
-// --- NEW USER SCHEMA (for registration/login) ---
+mongoose.connect(MONGO_URI, {
+  useNewUrlParser: true,
+  useUnifiedTopology: true,
+})
+.then(() => console.log('✅ User Service connected to MongoDB Atlas'))
+.catch(err => console.error('❌ MongoDB connection error:', err));
+
+// User Schema
 const userSchema = new mongoose.Schema({
   username: { type: String, required: true, unique: true },
   email: { type: String, required: true, unique: true },
-  password: { type: String, required: true }, // Hashed password
-  accessKeyId: { type: String, required: true },
-  encryptedSecretKey: { type: String, required: true },
+  password: { type: String, required: true },
   region: { type: String, default: 'us-east-1' },
+  awsCredentials: {
+    accessKeyId: String,
+    secretAccessKey: String,
+    iv: String,
+  },
   createdAt: { type: Date, default: Date.now }
 });
 
 const User = mongoose.model('User', userSchema);
 
-// --- OLD CREDENTIAL SCHEMA (for backward compatibility) ---
-const credentialSchema = new mongoose.Schema({
-  userId: { type: String, required: true, unique: true },
-  accessKeyId: { type: String, required: true },
-  encryptedSecretKey: { type: String, required: true },
-  region: { type: String, required: true },
+// Encryption functions
+const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY || 'defaultkey12345678901234567890';
+const algorithm = 'aes-256-cbc';
+
+function encrypt(text) {
+  const iv = crypto.randomBytes(16);
+  const key = Buffer.from(ENCRYPTION_KEY.padEnd(32, '0').slice(0, 32));
+  const cipher = crypto.createCipheriv(algorithm, key, iv);
+  let encrypted = cipher.update(text, 'utf8', 'hex');
+  encrypted += cipher.final('hex');
+  return {
+    encryptedData: encrypted,
+    iv: iv.toString('hex')
+  };
+}
+
+function decrypt(encryptedData, ivHex) {
+  const iv = Buffer.from(ivHex, 'hex');
+  const key = Buffer.from(ENCRYPTION_KEY.padEnd(32, '0').slice(0, 32));
+  const decipher = crypto.createDecipheriv(algorithm, key, iv);
+  let decrypted = decipher.update(encryptedData, 'hex', 'utf8');
+  decrypted += decipher.final('utf8');
+  return decrypted;
+}
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).json({ 
+    status: 'healthy', 
+    service: 'user-service',
+    timestamp: new Date().toISOString()
+  });
 });
 
-const Credential = mongoose.model('Credential', credentialSchema);
+// --- AUTHENTICATION ROUTES ---
 
-// --- Encryption Helpers ---
-function encrypt(text) {
-  if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 32) {
-    throw new Error('Invalid ENCRYPTION_KEY. Must be 32 bytes.');
-  }
-  const iv = crypto.randomBytes(IV_LENGTH);
-  const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
-  let encrypted = cipher.update(text);
-  encrypted = Buffer.concat([encrypted, cipher.final()]);
-  return iv.toString('hex') + ':' + encrypted.toString('hex');
-}
-
-function decrypt(text) {
-  if (!ENCRYPTION_KEY || ENCRYPTION_KEY.length !== 32) {
-    throw new Error('Invalid ENCRYPTION_KEY. Must be 32 bytes.');
-  }
-  const textParts = text.split(':');
-  const iv = Buffer.from(textParts.shift(), 'hex');
-  const encryptedText = Buffer.from(textParts.join(':'), 'hex');
-  const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
-  let decrypted = decipher.update(encryptedText);
-  decrypted = Buffer.concat([decrypted, decipher.final()]);
-  return decrypted.toString();
-}
-
-// --- NEW ROUTES ---
-
-/**
- * POST /api/user/register
- * Registers a new user with username, email, password, access key, and secret key
- */
-app.post('/api/user/register', async (req, res) => {
+// Register
+app.post('/api/auth/register', async (req, res) => {
   try {
-    const { username, email, password, accessKeyId, secretAccessKey } = req.body;
+    console.log('📝 Register request received');
+    const { username, email, password, region, awsAccessKeyId, awsSecretAccessKey } = req.body;
 
     // Validate required fields
-    if (!username || !email || !password || !accessKeyId || !secretAccessKey) {
-      return res.status(400).send({ message: 'All fields are required.' });
+    if (!username || !email || !password) {
+      return res.status(400).json({ message: 'Username, email, and password are required' });
     }
 
     // Check if user already exists
     const existingUser = await User.findOne({ $or: [{ username }, { email }] });
     if (existingUser) {
-      return res.status(409).send({ message: 'Username or email already exists.' });
+      return res.status(400).json({ message: 'Username or email already exists' });
     }
 
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Encrypt secret key
-    const encryptedSecretKey = encrypt(secretAccessKey);
+    // Encrypt AWS credentials if provided
+    let awsCredentials = {};
+    if (awsAccessKeyId && awsSecretAccessKey) {
+      const encryptedAccessKey = encrypt(awsAccessKeyId);
+      const encryptedSecretKey = encrypt(awsSecretAccessKey);
+      
+      awsCredentials = {
+        accessKeyId: encryptedAccessKey.encryptedData,
+        secretAccessKey: encryptedSecretKey.encryptedData,
+        iv: encryptedAccessKey.iv, // Same IV for both
+      };
+    }
 
     // Create new user
     const newUser = new User({
       username,
       email,
       password: hashedPassword,
-      accessKeyId,
-      encryptedSecretKey,
-      region: 'us-east-1' // Default region
+      region: region || 'us-east-1',
+      awsCredentials
     });
 
     await newUser.save();
+    console.log('✅ User registered successfully:', username);
 
-    console.log('✅ User registered:', username);
-
-    res.status(201).send({ 
-      message: '✅ User registered successfully!',
-      userId: newUser._id 
+    res.status(201).json({
+      message: 'User registered successfully',
+      userId: newUser._id,
+      username: newUser.username,
+      email: newUser.email,
+      region: newUser.region
     });
   } catch (error) {
-    console.error('Error registering user:', error);
-    res.status(500).send({ message: '❌ Internal server error during registration.' });
+    console.error('❌ Registration error:', error);
+    res.status(500).json({ message: 'Server error during registration', error: error.message });
   }
 });
 
-/**
- * POST /api/user/login
- * Authenticates user with username, email, password, and optional region
- */
-app.post('/api/user/login', async (req, res) => {
+// Login
+app.post('/api/auth/login', async (req, res) => {
   try {
-    const { username, email, password, region } = req.body;
+    console.log('🔐 Login request received');
+    const { username, email, password } = req.body;
 
-    // Validate required fields
-    if (!username || !email || !password) {
-      return res.status(400).send({ message: 'Username, email, and password are required.' });
-    }
-
-    // Find user by username and email
-    const user = await User.findOne({ username, email });
+    // Find user by username or email
+    const user = await User.findOne({ $or: [{ username }, { email }] });
+    
     if (!user) {
-      return res.status(401).send({ message: 'Invalid credentials.' });
+      console.log('❌ User not found');
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Verify password
+    // Check password
     const isPasswordValid = await bcrypt.compare(password, user.password);
+    
     if (!isPasswordValid) {
-      return res.status(401).send({ message: 'Invalid credentials.' });
+      console.log('❌ Invalid password');
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Update region if provided
-    if (region && region !== user.region) {
-      user.region = region;
-      await user.save();
-    }
+    console.log('✅ Login successful for:', user.username);
 
-    console.log('✅ User logged in:', username);
-
-    res.status(200).send({ 
-      message: '✅ Login successful!',
+    res.status(200).json({
+      message: 'Login successful',
       userId: user._id,
       username: user.username,
       email: user.email,
-      region: user.region || region
+      region: user.region,
+      hasAwsCredentials: !!(user.awsCredentials?.accessKeyId)
     });
   } catch (error) {
-    console.error('Error during login:', error);
-    res.status(500).send({ message: '❌ Internal server error during login.' });
+    console.error('❌ Login error:', error);
+    res.status(500).json({ message: 'Server error during login', error: error.message });
   }
 });
 
-/**
- * GET /api/user/profile/:userId
- * Get user profile data (without sensitive info)
- */
-app.get('/api/user/profile/:userId', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    
-    console.log('📋 Fetching profile for user:', userId);
-    
-    const user = await User.findById(userId);
-    
-    if (!user) {
-      console.error('❌ User not found:', userId);
-      return res.status(404).send({ message: 'User not found.' });
-    }
-
-    console.log('✅ Profile found for user:', user.username);
-
-    // Return user data without password and secret key
-    res.status(200).send({
-      username: user.username,
-      email: user.email,
-      accessKeyId: user.accessKeyId,
-      region: user.region
-    });
-  } catch (error) {
-    console.error('❌ Error fetching profile:', error);
-    res.status(500).send({ message: '❌ Internal server error while fetching profile.' });
-  }
-});
-
-/**
- * POST /api/user/update-profile
- * Update user profile information
- */
-app.post('/api/user/update-profile', async (req, res) => {
-  try {
-    const { userId, username, email, accessKeyId, secretAccessKey, newPassword } = req.body;
-
-    console.log('📝 Updating profile for user:', userId);
-
-    const user = await User.findById(userId);
-    if (!user) {
-      console.error('❌ User not found:', userId);
-      return res.status(404).send({ message: 'User not found.' });
-    }
-
-    // Update fields only if provided
-    if (username) {
-      console.log('Updating username:', username);
-      user.username = username;
-    }
-    if (email) {
-      console.log('Updating email:', email);
-      user.email = email;
-    }
-    if (accessKeyId) {
-      console.log('Updating access key');
-      user.accessKeyId = accessKeyId;
-    }
-    if (secretAccessKey) {
-      console.log('Updating secret key (encrypted)');
-      user.encryptedSecretKey = encrypt(secretAccessKey);
-    }
-    if (newPassword) {
-      console.log('Updating password (hashed)');
-      user.password = await bcrypt.hash(newPassword, 10);
-    }
-
-    await user.save();
-    console.log('✅ Profile updated successfully for user:', user.username);
-
-    res.status(200).send({ message: '✅ Profile updated successfully!' });
-  } catch (error) {
-    console.error('❌ Error updating profile:', error);
-    res.status(500).send({ message: '❌ Internal server error while updating profile.' });
-  }
-});
-
-/**
- * POST /api/user/update-region
- * Update user's preferred AWS region
- */
-app.post('/api/user/update-region', async (req, res) => {
+// Update Region
+app.post('/api/auth/update-region', async (req, res) => {
   try {
     const { userId, region } = req.body;
 
-    console.log('🌍 Updating region for user:', userId, 'to:', region);
-
-    const user = await User.findById(userId);
-    if (!user) {
-      console.error('❌ User not found:', userId);
-      return res.status(404).send({ message: 'User not found.' });
+    if (!userId || !region) {
+      return res.status(400).json({ message: 'userId and region are required' });
     }
 
-    user.region = region;
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { region },
+      { new: true }
+    );
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({
+      message: 'Region updated successfully',
+      region: user.region
+    });
+  } catch (error) {
+    console.error('❌ Update region error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// --- PROFILE ROUTES ---
+
+// Get Profile
+app.get('/api/profile/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+
+    const user = await User.findById(userId).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    res.status(200).json({
+      userId: user._id,
+      username: user.username,
+      email: user.email,
+      region: user.region,
+      hasAwsCredentials: !!(user.awsCredentials?.accessKeyId),
+      createdAt: user.createdAt
+    });
+  } catch (error) {
+    console.error('❌ Get profile error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Update Profile
+app.put('/api/profile/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const { username, email, password, region, awsAccessKeyId, awsSecretAccessKey } = req.body;
+
+    const user = await User.findById(userId);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    // Update basic fields
+    if (username) user.username = username;
+    if (email) user.email = email;
+    if (region) user.region = region;
+
+    // Update password if provided
+    if (password) {
+      user.password = await bcrypt.hash(password, 10);
+    }
+
+    // Update AWS credentials if provided
+    if (awsAccessKeyId && awsSecretAccessKey) {
+      const encryptedAccessKey = encrypt(awsAccessKeyId);
+      const encryptedSecretKey = encrypt(awsSecretAccessKey);
+      
+      user.awsCredentials = {
+        accessKeyId: encryptedAccessKey.encryptedData,
+        secretAccessKey: encryptedSecretKey.encryptedData,
+        iv: encryptedAccessKey.iv,
+      };
+    }
+
     await user.save();
 
-    console.log('✅ Region updated to:', region);
-
-    res.status(200).send({ message: '✅ Region updated successfully!' });
+    res.status(200).json({
+      message: 'Profile updated successfully',
+      userId: user._id,
+      username: user.username,
+      email: user.email,
+      region: user.region,
+      hasAwsCredentials: !!(user.awsCredentials?.accessKeyId)
+    });
   } catch (error) {
-    console.error('❌ Error updating region:', error);
-    res.status(500).send({ message: '❌ Internal server error while updating region.' });
+    console.error('❌ Update profile error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
-// --- OLD ROUTES (for backward compatibility) ---
+// --- CREDENTIALS ROUTES ---
 
-/**
- * POST /api/user/credentials
- * Saves or updates a user's AWS credentials (OLD METHOD).
- */
-app.post('/api/user/credentials', async (req, res) => {
+// Get Decrypted AWS Credentials
+app.get('/api/user/credentials/:userId/aws', async (req, res) => {
   try {
-    const { userId, accessKeyId, secretAccessKey, region } = req.body;
+    const { userId } = req.params;
 
-    if (!userId || !accessKeyId || !secretAccessKey || !region) {
-      return res.status(400).send({ message: 'Missing required fields.' });
-    }
-
-    const encryptedSecretKey = encrypt(secretAccessKey);
-
-    const newCred = { userId, accessKeyId, encryptedSecretKey, region };
-    await Credential.updateOne({ userId }, newCred, { upsert: true });
-
-    res.status(200).send({ message: '✅ Credentials saved securely.' });
-  } catch (error) {
-    console.error('Error saving credentials:', error);
-    res.status(500).send({ message: '❌ Internal server error while saving credentials.' });
-  }
-});
-
-/**
- * GET /api/user/credentials/:userId/:provider
- * Retrieves and decrypts AWS credentials for Monitoring Service.
- */
-app.get('/api/user/credentials/:userId/:provider', async (req, res) => {
-  try {
-    const { userId, provider } = req.params;
-
-    if (provider !== 'aws') {
-      return res.status(400).send({ message: 'Only AWS provider is supported.' });
-    }
-
-    // Try to get from new User schema first
     const user = await User.findById(userId);
-    if (user) {
-      const decryptedSecret = decrypt(user.encryptedSecretKey);
-      return res.status(200).send({
-        decryptedSecret: {
-          accessKeyId: user.accessKeyId,
-          secretAccessKey: decryptedSecret,
-          region: user.region
-        }
-      });
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
     }
 
-    // Fallback to old Credential schema
-    const cred = await Credential.findOne({ userId });
-    if (!cred) {
-      return res.status(404).send({ message: 'No credentials found for user.' });
+    if (!user.awsCredentials?.accessKeyId) {
+      return res.status(404).json({ message: 'AWS credentials not found' });
     }
 
-    const decryptedSecretKey = decrypt(cred.encryptedSecretKey);
+    // Decrypt credentials
+    const accessKeyId = decrypt(user.awsCredentials.accessKeyId, user.awsCredentials.iv);
+    const secretAccessKey = decrypt(user.awsCredentials.secretAccessKey, user.awsCredentials.iv);
 
-    res.status(200).send({
+    res.status(200).json({
       decryptedSecret: {
-        accessKeyId: cred.accessKeyId,
-        secretAccessKey: decryptedSecretKey,
-        region: cred.region,
-      },
+        accessKeyId,
+        secretAccessKey,
+        region: user.region
+      }
     });
   } catch (error) {
-    console.error('Error retrieving credentials:', error);
-    res.status(500).send({
-      message: '❌ Error retrieving or decrypting credentials.',
-      error: error.message,
-    });
+    console.error('❌ Get credentials error:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
-app.listen(PORT, () => console.log(`🚀 User Service listening on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`🚀 User Service listening on port ${PORT}`);
+});

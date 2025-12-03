@@ -2,10 +2,10 @@
   "name": "api-gateway",
   "version": "1.0.0",
   "description": "Base dependencies for microservice architecture.",
-  "main": "index.js",
+  "main": "backend.js",
   "type": "module",
   "scripts": {
-    "start": "node index.js"
+    "start": "node backend.js"
   },
   "dependencies": {
     "@aws-sdk/client-cloudwatch": "^3.535.0",

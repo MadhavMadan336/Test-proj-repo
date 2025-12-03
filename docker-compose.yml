@@ -1,0 +1,98 @@
+services:
+  user-service:
+    build:
+      context: ./user-service
+      dockerfile: Dockerfile
+    container_name: cloudops-user-service
+    restart: unless-stopped
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=production
+      - PORT=3001
+      - MONGO_URI=${MONGO_URI}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+    networks:
+      - cloudops-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  monitoring-service:
+    build:
+      context: ./monitoring-service
+      dockerfile: Dockerfile
+    container_name: cloudops-monitoring-service
+    restart: unless-stopped
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=production
+      - PORT=3002
+      - USER_SERVICE_URL=http://user-service:3001
+    depends_on:
+      user-service:
+        condition: service_healthy
+    networks:
+      - cloudops-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  api-gateway:
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: cloudops-api-gateway
+    restart: unless-stopped
+    ports:
+      - "3003:3003"
+    environment:
+      - NODE_ENV=production
+      - PORT=3003
+      - USER_SERVICE_URL=http://user-service:3001
+      - MONITORING_SERVICE_URL=http://monitoring-service:3002
+    depends_on:
+      user-service:
+        condition: service_healthy
+      monitoring-service:
+        condition: service_healthy
+    networks:
+      - cloudops-network
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+  frontend:
+    build:
+      context: frontend/dashboard
+      dockerfile: Dockerfile
+    container_name: cloudops-frontend
+    restart: unless-stopped
+    ports:
+      - "3004:3004"
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    networks:
+      - cloudops-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:3004"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+networks:
+  cloudops-network:
+    driver: bridge
+    name: cloudops-network

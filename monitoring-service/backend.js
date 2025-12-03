@@ -4,7 +4,8 @@ import cors from 'cors';
 import axios from 'axios';
 import { CloudWatchClient, GetMetricStatisticsCommand } from "@aws-sdk/client-cloudwatch";
 import { EC2Client, DescribeInstancesCommand, DescribeVolumesCommand } from "@aws-sdk/client-ec2";
-import { S3Client, ListBucketsCommand, GetBucketLocationCommand } from "@aws-sdk/client-s3";
+import { S3Client, ListBucketsCommand, GetBucketLocationCommand, ListObjectsV2Command, HeadBucketCommand } from "@aws-sdk/client-s3";
+
 import { RDSClient, DescribeDBInstancesCommand } from "@aws-sdk/client-rds";
 import { LambdaClient, ListFunctionsCommand } from "@aws-sdk/client-lambda";
 import { CostExplorerClient, GetCostAndUsageCommand, GetCostForecastCommand } from "@aws-sdk/client-cost-explorer";
@@ -13,7 +14,7 @@ dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3002;
-const USER_SERVICE_URL = 'http://localhost:3001'; 
+const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://user-service:3001';
 
 app.use(cors());
 app.use(express.json());
@@ -22,7 +23,12 @@ app.use(express.json());
 
 async function getCredentials(userId, regionOverride = null) {
   try {
-    const response = await axios.get(`${USER_SERVICE_URL}/api/user/credentials/${userId}/aws`);
+    console.log(`🔑 Fetching credentials for user: ${userId} from ${USER_SERVICE_URL}`);
+    
+    const response = await axios.get(`${USER_SERVICE_URL}/api/user/credentials/${userId}/aws`, {
+      timeout: 10000
+    });
+    
     const data = response.data;
 
     if (!data || !data.decryptedSecret) {
@@ -40,6 +46,7 @@ async function getCredentials(userId, regionOverride = null) {
   } catch (error) {
     console.error(`❌ Failed to fetch credentials: ${error.message}`);
     
+    // Fallback to ENV credentials
     const fallbackKeys = {
       accessKeyId: process.env.AWS_ACCESS_KEY_ID,
       secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
@@ -47,7 +54,7 @@ async function getCredentials(userId, regionOverride = null) {
     };
 
     if (!fallbackKeys.accessKeyId || !fallbackKeys.secretAccessKey) {
-      throw new Error('Could not retrieve valid AWS credentials.');
+      throw new Error('Could not retrieve valid AWS credentials from user or environment.');
     }
 
     console.warn('⚠️ Using fallback ENV credentials.');
@@ -418,6 +425,48 @@ async function fetchEBSVolumes(ec2Client, cloudWatchClient) {
 }
 
 // --- S3 Buckets ---
+// Add this helper function at the top of the file (after imports)
+
+function formatStorageSize(bytes) {
+    if (bytes === 0) return { value: '0', unit: 'Bytes', displaySize: '0 Bytes', numericValue: 0 };
+    
+    const kb = bytes / 1024;
+    const mb = kb / 1024;
+    const gb = mb / 1024;
+    
+    if (gb >= 1) {
+        return { 
+            value: gb.toFixed(2), 
+            unit: 'GB', 
+            displaySize: `${gb.toFixed(2)} GB`,
+            numericValue: gb
+        };
+    } else if (mb >= 1) {
+        return { 
+            value: mb.toFixed(2), 
+            unit: 'MB', 
+            displaySize: `${mb.toFixed(2)} MB`,
+            numericValue: mb / 1024 // Convert to GB for calculations
+        };
+    } else if (kb >= 1) {
+        return { 
+            value: kb.toFixed(2), 
+            unit: 'KB', 
+            displaySize: `${kb.toFixed(2)} KB`,
+            numericValue: kb / (1024 * 1024) // Convert to GB for calculations
+        };
+    } else {
+        return { 
+            value: bytes.toString(), 
+            unit: 'Bytes', 
+            displaySize: `${bytes} Bytes`,
+            numericValue: bytes / (1024 * 1024 * 1024) // Convert to GB for calculations
+        };
+    }
+}
+
+// Now update the fetchS3Buckets function:
+
 async function fetchS3Buckets(s3Client, cloudWatchClient, region) {
     try {
         const command = new ListBucketsCommand({});
@@ -430,50 +479,91 @@ async function fetchS3Buckets(s3Client, cloudWatchClient, region) {
         const buckets = [];
         for (const bucket of bucketData.Buckets) {
             try {
+                // Get bucket location
                 const locationCommand = new GetBucketLocationCommand({ Bucket: bucket.Name });
                 const locationData = await s3Client.send(locationCommand);
                 const bucketRegion = locationData.LocationConstraint || 'us-east-1';
 
+                // Only include buckets in the current region
                 if (bucketRegion !== region && !(region === 'us-east-1' && !locationData.LocationConstraint)) {
                     continue;
                 }
 
-                let bucketSize = await getCloudWatchMetric(
-                    cloudWatchClient,
-                    'AWS/S3',
-                    'BucketSizeBytes',
-                    [
-                        { Name: 'BucketName', Value: bucket.Name },
-                        { Name: 'StorageType', Value: 'StandardStorage' }
-                    ],
-                    'Average'
-                );
+                console.log(`📦 Processing S3 bucket: ${bucket.Name} in region: ${bucketRegion}`);
 
-                let numberOfObjects = await getCloudWatchMetric(
-                    cloudWatchClient,
-                    'AWS/S3',
-                    'NumberOfObjects',
-                    [
-                        { Name: 'BucketName', Value: bucket.Name },
-                        { Name: 'StorageType', Value: 'AllStorageTypes' }
-                    ],
-                    'Average'
-                );
+                // Get real-time object count and size using ListObjectsV2
+                let totalSize = 0;
+                let objectCount = 0;
+                let continuationToken = null;
+                let requestCount = 0;
+                const maxRequests = 10; // Limit to prevent long processing times
 
-                const sizeInGB = typeof bucketSize === 'number' ? (bucketSize / (1024 ** 3)).toFixed(2) : 'N/A';
-                const objectCount = typeof numberOfObjects === 'number' ? numberOfObjects.toFixed(0) : 'N/A';
+                do {
+                    try {
+                        const listParams = {
+                            Bucket: bucket.Name,
+                            MaxKeys: 1000,
+                            ...(continuationToken && { ContinuationToken: continuationToken })
+                        };
+
+                        const listCommand = new ListObjectsV2Command(listParams);
+                        const listResponse = await s3Client.send(listCommand);
+
+                        if (listResponse.Contents) {
+                            objectCount += listResponse.Contents.length;
+                            totalSize += listResponse.Contents.reduce((sum, obj) => sum + (obj.Size || 0), 0);
+                        }
+
+                        continuationToken = listResponse.NextContinuationToken;
+                        requestCount++;
+
+                        // Break if we've made too many requests (for very large buckets)
+                        if (requestCount >= maxRequests && continuationToken) {
+                            console.log(`⚠️ Bucket ${bucket.Name} has more objects, showing partial count`);
+                            objectCount = `${objectCount}+`;
+                            break;
+                        }
+
+                    } catch (listError) {
+                        console.error(`Error listing objects in ${bucket.Name}:`, listError.message);
+                        break;
+                    }
+                } while (continuationToken);
+
+                // Format storage size intelligently
+                const storageInfo = formatStorageSize(totalSize);
+
+                console.log(`✅ Bucket ${bucket.Name}: ${objectCount} objects, ${storageInfo.displaySize} (${totalSize} bytes)`);
 
                 buckets.push({
                     name: bucket.Name,
                     creationDate: bucket.CreationDate.toISOString().split('T')[0],
-                    numberOfObjects: objectCount,
-                    sizeInGB: sizeInGB === 'N/A' ? 'N/A' : `${sizeInGB} GB`,
+                    numberOfObjects: objectCount.toString(),
+                    sizeDisplay: storageInfo.displaySize, // Human readable (e.g., "36.5 KB")
+                    sizeInGB: storageInfo.numericValue.toFixed(6), // For calculations (always in GB)
+                    sizeInBytes: totalSize, // Raw bytes
+                    storageUnit: storageInfo.unit, // KB, MB, GB
                     region: bucketRegion
                 });
+
             } catch (bucketError) {
                 console.error(`Error processing bucket ${bucket.Name}:`, bucketError.message);
+                
+                // Still add the bucket with N/A values if we can't access it
+                buckets.push({
+                    name: bucket.Name,
+                    creationDate: bucket.CreationDate.toISOString().split('T')[0],
+                    numberOfObjects: 'N/A',
+                    sizeDisplay: 'N/A',
+                    sizeInGB: '0',
+                    sizeInBytes: 0,
+                    storageUnit: 'N/A',
+                    region: 'unknown',
+                    error: 'Access Denied or Bucket Policy Restriction'
+                });
             }
         }
+
         return buckets;
     } catch (error) {
         console.error('❌ Error fetching S3 buckets:', error.message);
@@ -787,6 +877,14 @@ app.get('/api/costs/debug/:userId', async (req, res) => {
             stack: error.stack
         });
     }
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).send({ 
+    status: 'healthy', 
+    service: 'monitoring-service',
+    timestamp: new Date().toISOString()
+  });
 });
 
 app.listen(PORT, () => {

@@ -36,7 +36,7 @@ const alertSchema = Joi.object({
     }),
     webhook: Joi.object({
       enabled: Joi. boolean().default(false),
-      url: Joi. string(). uri(),
+      url: Joi.string().uri().allow('').optional(),
       headers: Joi.object()
     })
   }),

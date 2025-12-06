@@ -161,18 +161,21 @@ const CreateAlert = ({ userId, onLogout }) => {
       return;
     }
 
-    console.log('📤 Submitting alert data:', JSON.stringify(cleanedFormData, null, 2));
+    // Strip MongoDB internal fields when editing
+const { _id, userId: uid, triggerCount, createdAt, updatedAt, __v, lastTriggered, ...dataToSubmit } = cleanedFormData;
 
-    try {
-      const url = isEdit 
-        ? `${API_GATEWAY_URL}/api/alerts/${userId}/${alertId}`
-        : `${API_GATEWAY_URL}/api/alerts/${userId}`;
-      
-      const res = await fetch(url, {
-        method: isEdit ? 'PUT' : 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(cleanedFormData)
-      });
+console.log('📤 Submitting alert data:', JSON.stringify(dataToSubmit, null, 2));
+
+try {
+  const url = isEdit 
+    ?  `${API_GATEWAY_URL}/api/alerts/${userId}/${alertId}`
+    : `${API_GATEWAY_URL}/api/alerts/${userId}`;
+  
+  const res = await fetch(url, {
+    method: isEdit ? 'PUT' : 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(dataToSubmit)
+  });
 
       const data = await res.json();
       

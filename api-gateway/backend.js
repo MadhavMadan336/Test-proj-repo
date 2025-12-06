@@ -11,10 +11,12 @@ const PORT = process.env.PORT || 3003;
 // Use environment variable or default
 const USER_SERVICE_URL = process.env.USER_SERVICE_URL || 'http://user-service:3001';
 const MONITORING_SERVICE_URL = process.env.MONITORING_SERVICE_URL || 'http://monitoring-service:3002';
+const ALERT_SERVICE_URL = process.env.ALERT_SERVICE_URL || 'http://alert-service:3007';
 
 console.log('🌐 API Gateway starting...');
 console.log('📍 User Service URL:', USER_SERVICE_URL);
 console.log('📍 Monitoring Service URL:', MONITORING_SERVICE_URL);
+console.log('📍 Alert Service URL:', ALERT_SERVICE_URL);  // ADD THIS
 
 app.use(cors());
 app.use(express.json());
@@ -205,7 +207,193 @@ app.get('/api/data/resources/:userId', async (req, res) => {
     res.status(status).send({ message });
   }
 });
+// --- ALERT ROUTES ---
 
+
+console.log('📍 Alert Service URL:', ALERT_SERVICE_URL);  // Add to startup logs
+
+// Get all alerts for user
+app.get('/api/alerts/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    console.log(`📬 Get alerts for user: ${userId}`);
+    const response = await axios.get(`${ALERT_SERVICE_URL}/api/alerts/${userId}`, {
+      timeout: 10000
+    });
+    res.status(response.status).send(response.data);
+  } catch (error) {
+    console.error('❌ Get alerts error:', error. message);
+    const status = error.response ?  error.response.status : 500;
+    const message = error.response 
+      ? error.response.data 
+      : { success: false, message: 'Failed to fetch alerts' };
+    res.status(status).send(message);
+  }
+});
+
+// Get single alert
+app.get('/api/alerts/:userId/:alertId', async (req, res) => {
+  try {
+    const { userId, alertId } = req.params;
+    const response = await axios.get(`${ALERT_SERVICE_URL}/api/alerts/${userId}/${alertId}`, {
+      timeout: 10000
+    });
+    res.status(response.status).send(response.data);
+  } catch (error) {
+    console.error('❌ Get alert error:', error.message);
+    const status = error.response ? error.response.status : 500;
+    const message = error.response 
+      ? error.response. data 
+      : { success: false, message: 'Failed to fetch alert' };
+    res. status(status).send(message);
+  }
+});
+
+// Create alert
+app.post('/api/alerts/:userId', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    console.log('📬 Create alert request for user:', userId);
+    const response = await axios.post(`${ALERT_SERVICE_URL}/api/alerts/${userId}`, req.body, {
+      timeout: 10000
+    });
+    res. status(response.status).send(response.data);
+  } catch (error) {
+    console. error('❌ Create alert error:', error.message);
+    const status = error.response ? error. response.status : 500;
+    const message = error.response 
+      ? error.response.data 
+      : { success: false, message: 'Failed to create alert' };
+    res.status(status).send(message);
+  }
+});
+
+// Update alert
+app.put('/api/alerts/:userId/:alertId', async (req, res) => {
+  try {
+    const { userId, alertId } = req.params;
+    const response = await axios.put(`${ALERT_SERVICE_URL}/api/alerts/${userId}/${alertId}`, req.body, {
+      timeout: 10000
+    });
+    res.status(response. status).send(response.data);
+  } catch (error) {
+    console.error('❌ Update alert error:', error.message);
+    const status = error. response ? error.response.status : 500;
+    const message = error.response 
+      ? error.response.data 
+      : { success: false, message: 'Failed to update alert' };
+    res.status(status).send(message);
+  }
+});
+
+// Toggle alert
+app.patch('/api/alerts/:userId/:alertId/toggle', async (req, res) => {
+  try {
+    const { userId, alertId } = req.params;
+    const response = await axios.patch(`${ALERT_SERVICE_URL}/api/alerts/${userId}/${alertId}/toggle`, req.body, {
+      timeout: 10000
+    });
+    res.status(response.status). send(response.data);
+  } catch (error) {
+    console.error('❌ Toggle alert error:', error.message);
+    const status = error.response ?  error.response.status : 500;
+    const message = error. response 
+      ? error.response.data 
+      : { success: false, message: 'Failed to toggle alert' };
+    res.status(status).send(message);
+  }
+});
+
+// Delete alert
+app.delete('/api/alerts/:userId/:alertId', async (req, res) => {
+  try {
+    const { userId, alertId } = req. params;
+    const response = await axios.delete(`${ALERT_SERVICE_URL}/api/alerts/${userId}/${alertId}`, {
+      timeout: 10000
+    });
+    res.status(response.status).send(response. data);
+  } catch (error) {
+    console.error('❌ Delete alert error:', error.message);
+    const status = error.response ? error.response. status : 500;
+    const message = error.response 
+      ? error.response.data 
+      : { success: false, message: 'Failed to delete alert' };
+    res.status(status).send(message);
+  }
+});
+
+// Get alert history
+app.get('/api/alerts/:userId/history/all', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const response = await axios. get(`${ALERT_SERVICE_URL}/api/alerts/${userId}/history/all`, {
+      params: req.query,
+      timeout: 10000
+    });
+    res.status(response.status).send(response.data);
+  } catch (error) {
+    console.error('❌ Get alert history error:', error.message);
+    const status = error.response ? error. response.status : 500;
+    const message = error.response 
+      ? error.response.data 
+      : { success: false, message: 'Failed to fetch alert history' };
+    res. status(status).send(message);
+  }
+});
+
+// Get alert stats
+app.get('/api/alerts/:userId/stats/summary', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const response = await axios.get(`${ALERT_SERVICE_URL}/api/alerts/${userId}/stats/summary`, {
+      timeout: 10000
+    });
+    res.status(response.status).send(response.data);
+  } catch (error) {
+    console.error('❌ Get alert stats error:', error.message);
+    const status = error. response ? error.response.status : 500;
+    const message = error.response 
+      ? error.response.data 
+      : { success: false, message: 'Failed to fetch alert stats' };
+    res.status(status). send(message);
+  }
+});
+
+// Acknowledge alert history
+app.patch('/api/alerts/:userId/history/:historyId/acknowledge', async (req, res) => {
+  try {
+    const { userId, historyId } = req.params;
+    const response = await axios.patch(`${ALERT_SERVICE_URL}/api/alerts/${userId}/history/${historyId}/acknowledge`, req.body, {
+      timeout: 10000
+    });
+    res.status(response.status).send(response.data);
+  } catch (error) {
+    console.error('❌ Acknowledge alert error:', error.message);
+    const status = error.response ? error. response.status : 500;
+    const message = error.response 
+      ? error.response.data 
+      : { success: false, message: 'Failed to acknowledge alert' };
+    res.status(status).send(message);
+  }
+});
+
+// Test email
+app.post('/api/alerts/:userId/test-email', async (req, res) => {
+  try {
+    const { userId } = req.params;
+    const response = await axios.post(`${ALERT_SERVICE_URL}/api/alerts/${userId}/test-email`, req.body, {
+      timeout: 10000
+    });
+    res. status(response.status).send(response.data);
+  } catch (error) {
+    console. error('❌ Test email error:', error.message);
+    const status = error.response ? error. response.status : 500;
+    const message = error.response 
+      ? error.response.data 
+      : { success: false, message: 'Failed to send test email' };
+    res. status(status).send(message);
+  }
+});
 // Debug Cost Route
 app.get('/api/data/costs/debug/:userId', async (req, res) => {
   try {

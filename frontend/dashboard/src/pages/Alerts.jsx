@@ -35,18 +35,25 @@ const Alerts = ({ userId, onLogout }) => {
   }, [userId]);
 
   const fetchAlerts = async () => {
-    try {
-      const res = await fetch(`${API_GATEWAY_URL}/api/alerts/${userId}`);
-      const data = await res.json();
-      if (data.success) {
-        setAlerts(data.alerts);
-      }
-      setLoading(false);
-    } catch (error) {
-      console.error('Error fetching alerts:', error);
-      setLoading(false);
+  try {
+    console.log('Fetching alerts for userId:', userId);  // ADD THIS
+    const res = await fetch(`${API_GATEWAY_URL}/api/alerts/${userId}`);
+    console.log('Response status:', res.status);  // ADD THIS
+    const data = await res.json();
+    console.log('Response data:', data);  // ADD THIS
+    
+    if (data.success) {
+      console.log('Setting alerts:', data.alerts);  // ADD THIS
+      setAlerts(data. alerts);
+    } else {
+      console.log('Success flag is false or missing');  // ADD THIS
     }
-  };
+    setLoading(false);
+  } catch (error) {
+    console.error('Error fetching alerts:', error);
+    setLoading(false);
+  }
+};
 
   const fetchStats = async () => {
     try {

@@ -7,8 +7,8 @@ const emailService = require('./services/emailService');
 const alertMonitor = require('./services/alertMonitor');
 const axios = require('axios');
 const app = express();
-const PORT = process.env. ALERT_SERVICE_PORT || 3007;
-
+const PORT = process.env.ALERT_SERVICE_PORT || 3007;
+const ALERT_SERVICE_URL = process.env.ALERT_SERVICE_URL || 'http://alert-service:3007';
 // Middleware
 app. use(cors());
 app.use(express. json());

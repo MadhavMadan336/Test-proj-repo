@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Cloud, Server, Shield, ArrowLeft } from 'lucide-react';
 
-const Login = ({ setIsLoggedIn, setUserId, setRegion }) => {
+const Login = ({ onLogin }) => {
   const navigate = useNavigate();
   const [formData, setFormData] = useState({
     username: '',
@@ -35,51 +35,46 @@ const Login = ({ setIsLoggedIn, setUserId, setRegion }) => {
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
-    setMessage({ text: '', type: '' });
+  e.preventDefault();
+  setLoading(true);
+  setMessage({ text: '', type: '' });
 
-    try {
-      const response = await fetch(`${API_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
-        },
-        body: JSON.stringify(formData)
-      });
+  try {
+    const response = await fetch(`${API_URL}/api/auth/login`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(formData)
+    });
 
-      const contentType = response.headers.get('content-type');
-      if (!contentType || !contentType.includes('application/json')) {
-        throw new Error('Server returned non-JSON response');
-      }
-
-      const data = await response.json();
-
-      if (response.ok) {
-        setMessage({ text: data.message, type: 'success' });
-        
-        // Use fallback to 'us-east-1' if region is undefined or null
-        const userRegion = data.region || 'us-east-1';
-        
-        localStorage.setItem('userId', data.userId);
-        localStorage.setItem('username', data.username);
-        localStorage.setItem('region', userRegion);
-        
-        setUserId(data.userId);
-        setRegion(userRegion);
-        
-        setTimeout(() => {
-          setIsLoggedIn(true);
-        }, 1000);
-      } else {
-        setMessage({ text: data.message || 'Login failed', type: 'error' });
-      }
-    } catch (error) {
-      setMessage({ text: 'Network error. Please try again.', type: 'error' });
-    } finally {
-      setLoading(false);
+    const contentType = response.headers.get('content-type');
+    if (!contentType || !contentType. includes('application/json')) {
+      throw new Error('Server returned non-JSON response');
     }
-  };
+
+    const data = await response.json();
+
+    if (response.ok) {
+      setMessage({ text: data.message, type: 'success' });
+      
+      // Use fallback to 'us-east-1' if region is undefined or null
+      const userRegion = data.region || 'us-east-1';
+      
+      // Call the onLogin callback from App.js
+      setTimeout(() => {
+        onLogin(data.userId, data.username, data.email, userRegion);
+      }, 1000);
+    } else {
+      setMessage({ text: data.message || 'Login failed', type: 'error' });
+    }
+  } catch (error) {
+    console.error('Login error:', error);  // Add logging to see actual error
+    setMessage({ text: 'Network error. Please try again.', type: 'error' });
+  } finally {
+    setLoading(false);
+  }
+};
 
   return (
     <div className="min-h-screen flex">

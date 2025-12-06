@@ -193,7 +193,7 @@ const CreateAlert = ({ userId, onLogout }) => {
       }
     } catch (error) {
       console.error('❌ Error saving alert:', error);
-      setError('Failed to save alert. Please check your internet connection and try again.');
+      setError('An unexpected error occurred. Please try again.');
     } finally {
       setLoading(false);
     }

@@ -55,10 +55,10 @@ module.exports = {
                 ` : `<p><strong>Monitoring Scope:</strong> All Resources (Average)</p>`}
               </div>
 
-              ${alert.resourceFilter?.resourceIds?. length ?  `
+              ${alert.resourceFilter?.resourceIds?.length ?  `
                 <p><strong>Monitored Resources:</strong></p>
                 <ul>
-                  ${alert.resourceFilter. resourceIds.map(id => `<li>${id}</li>`). join('')}
+                  ${alert.resourceFilter.resourceIds.map(id => `<li>${id}</li>`).join('')}
                 </ul>
               ` : ''}
 

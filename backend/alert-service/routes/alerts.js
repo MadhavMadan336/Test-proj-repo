@@ -20,8 +20,8 @@ const alertSchema = Joi.object({
     monitoringScope: Joi.string().valid('all', 'specific').default('all'),
     resourceIds: Joi.array().items(Joi.string()).default([]),
     aggregation: Joi.string().valid('average', 'maximum', 'minimum', 'sum').default('average'),
-    tags: Joi.array(). items(Joi.object({
-      key: Joi. string(),
+    tags: Joi.array().items(Joi.object({
+      key: Joi.string(),
       value: Joi.string()
     })).default([]),
     region: Joi.string().allow('').optional()

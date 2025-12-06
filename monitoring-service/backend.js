@@ -892,6 +892,13 @@ app.get('/api/resources/:userId', async (req, res) => {
     const { service, region } = req.query;
 
     try {
+        // Validate service parameter
+        if (!service) {
+            return res.status(400).send({
+                message: 'Service parameter is required. Must be one of: EC2, S3, RDS, Lambda, EBS'
+            });
+        }
+
         console.log(`📋 Fetching resources for user: ${userId}, service: ${service}, region: ${region || 'default'}`);
         
         const { accessKeyId, secretAccessKey, region: finalRegion } = await getCredentials(userId, region);
@@ -901,7 +908,7 @@ app.get('/api/resources/:userId', async (req, res) => {
 
         let resources = [];
 
-        switch (service?.toUpperCase()) {
+        switch (service.toUpperCase()) {
             case 'EC2':
                 const ec2Client = new EC2Client({ region: finalRegion, credentials });
                 const cloudWatchClient = new CloudWatchClient({ region: finalRegion, credentials });

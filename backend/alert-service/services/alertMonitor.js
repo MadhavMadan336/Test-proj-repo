@@ -193,7 +193,7 @@ class AlertMonitor {
         return this.applyAggregation(connValues, filter?.aggregation || 'sum');
       
       case 'databaseCount':
-        return targetDBs. length;
+        return targetDBs.length;
       
       default:
         return null;
@@ -212,7 +212,7 @@ class AlertMonitor {
 
     switch (metric) {
       case 'errorRate':
-        const totalInvocations = targetFunctions. reduce((sum, f) => sum + (parseInt(f.metrics.invocations) || 0), 0);
+        const totalInvocations = targetFunctions.reduce((sum, f) => sum + (parseInt(f.metrics.invocations) || 0), 0);
         const totalErrors = targetFunctions.reduce((sum, f) => sum + (parseInt(f.metrics.errors) || 0), 0);
         return totalInvocations > 0 ? (totalErrors / totalInvocations) * 100 : 0;
       
@@ -239,17 +239,17 @@ class AlertMonitor {
     
     // If specific resources specified, filter to those
     if (filter?.monitoringScope === 'specific' && filter?.resourceIds?.length > 0) {
-      targetVolumes = volumes.filter(v => filter. resourceIds.includes(v.volumeId));
+      targetVolumes = volumes.filter(v => filter.resourceIds.includes(v.volumeId));
     }
 
     if (targetVolumes.length === 0) return null;
 
     switch (metric) {
       case 'volumeCount':
-        return targetVolumes. length;
+        return targetVolumes.length;
       
       case 'availableVolumes':
-        return targetVolumes. filter(v => v.state === 'available').length;
+        return targetVolumes.filter(v => v.state === 'available').length;
       
       case 'totalStorage':
         const sizeValues = targetVolumes.map(v => parseFloat(v.size) || 0);

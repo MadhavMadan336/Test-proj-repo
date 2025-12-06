@@ -48,26 +48,34 @@ const Login = ({ setIsLoggedIn, setUserId, setRegion }) => {
         body: JSON.stringify(formData)
       });
 
+      const contentType = response.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        throw new Error('Server returned non-JSON response');
+      }
+
       const data = await response.json();
 
       if (response.ok) {
         setMessage({ text: data.message, type: 'success' });
         
+        // Use fallback to 'us-east-1' if region is undefined or null
+        const userRegion = data.region || 'us-east-1';
+        
         localStorage.setItem('userId', data.userId);
         localStorage.setItem('username', data.username);
-        localStorage.setItem('region', data. region);
+        localStorage.setItem('region', userRegion);
         
         setUserId(data.userId);
-        setRegion(data.region);
+        setRegion(userRegion);
         
         setTimeout(() => {
           setIsLoggedIn(true);
         }, 1000);
       } else {
-        setMessage({ text: data. message || 'Login failed', type: 'error' });
+        setMessage({ text: data.message || 'Login failed', type: 'error' });
       }
     } catch (error) {
-      setMessage({ text: 'Network error.  Please try again.', type: 'error' });
+      setMessage({ text: 'Network error. Please try again.', type: 'error' });
     } finally {
       setLoading(false);
     }

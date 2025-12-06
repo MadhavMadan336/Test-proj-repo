@@ -72,10 +72,10 @@ const Login = ({ setIsLoggedIn, setUserId, setRegion }) => {
           setIsLoggedIn(true);
         }, 1000);
       } else {
-        setMessage({ text: data. message || 'Login failed', type: 'error' });
+        setMessage({ text: data.message || 'Login failed', type: 'error' });
       }
     } catch (error) {
-      setMessage({ text: 'Network error.  Please try again.', type: 'error' });
+      setMessage({ text: 'Network error. Please try again.', type: 'error' });
     } finally {
       setLoading(false);
     }

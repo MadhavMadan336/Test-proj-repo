@@ -3,26 +3,26 @@ import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-d
 import './App.css';
 
 // Auth Pages
-import Login from './Pages/Login';
-import Register from './Pages/Register';
+import Login from './pages/Login';
+import Register from './pages/Register';
 
 // Main Dashboard
-import Dashboard from './Pages/Dashboard';
+import Dashboard from './pages/Dashboard';
 
 // Service Dashboards
-import EC2Dashboard from './Pages/EC2Dashboard';
-import S3Dashboard from './Pages/S3Dashboard';
-import RDSDashboard from './Pages/RDSDashboard';
-import LambdaDashboard from './Pages/LambdaDashboard';
-import EBSDashboard from './Pages/EBSDashboard';
+import EC2Dashboard from './pages/EC2Dashboard';
+import S3Dashboard from './pages/S3Dashboard';
+import RDSDashboard from './pages/RDSDashboard';
+import LambdaDashboard from './pages/LambdaDashboard';
+import EBSDashboard from './pages/EBSDashboard';
 
 
 // Alert Pages
-import Alerts from './Pages/Alerts';
-import CreateAlert from './Pages/CreateAlert';
+import Alerts from './pages/Alerts';
+import CreateAlert from './pages/CreateAlert';
 
 // Settings (placeholder for now)
-import Settings from './Pages/Settings';
+import Settings from './pages/Settings';
 
 function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);

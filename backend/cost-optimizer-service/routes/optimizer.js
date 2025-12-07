@@ -66,10 +66,24 @@ router.get('/:userId/savings-timeline', async (req, res) => {
   try {
     const { userId } = req.params;
     const { days } = req.query;
-    const timeline = await savingsCalculator. getSavingsTimeline(userId, parseInt(days) || 30);
-    res. json({ success: true, timeline });
+    const timeline = await savingsCalculator.getSavingsTimeline(userId, parseInt(days) || 30);
+    res.json({ success: true, timeline });
   } catch (error) {
     console.error('Error fetching savings timeline:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// Verify recommendation implementation
+router.post('/recommendations/:recommendationId/verify', async (req, res) => {
+  try {
+    const { recommendationId } = req.params;
+    const { userId } = req.body;
+    
+    const result = await recommendationEngine.verifyImplementation(recommendationId, userId);
+    res.json({ success: true, ...result });
+  } catch (error) {
+    console.error('Error verifying recommendation:', error.message);
     res.status(500).json({ success: false, error: error.message });
   }
 });

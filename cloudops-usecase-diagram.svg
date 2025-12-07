@@ -1,0 +1,15 @@
+<svg width="600" height="400" xmlns="http://www.w3.org/2000/svg">
+    <rect x="50" y="50" width="500" height="300" fill="lightgray" stroke="black" stroke-width="2" />
+    <text x="90" y="30" font-size="20" font-weight="bold">Use Case Diagram</text>
+    <circle cx="100" cy="150" r="30" fill="blue" />
+    <text x="90" y="155" fill="white">User</text>
+    <circle cx="100" cy="250" r="30" fill="blue" />
+    <text x="90" y="255" fill="white">Admin</text>
+    <ellipse cx="300" cy="150" rx="100" ry="30" fill="green" />
+    <text x="250" y="155" fill="white">Login</text>
+    <ellipse cx="300" cy="250" rx="100" ry="30" fill="green" />
+    <text x="250" y="255" fill="white">Manage Users</text>
+    <line x1="130" y1="150" x2="220" y2="150" stroke="black" stroke-width="2" />
+    <line x1="130" y1="250" x2="220" y2="250" stroke="black" stroke-width="2" />
+    <text x="120" y="80" fill="black">System Boundary</text>
+</svg>
